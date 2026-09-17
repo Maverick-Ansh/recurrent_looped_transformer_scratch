@@ -1,0 +1,146 @@
+# recurrent_looped_transformer_scratch
+
+A computational dissection of **Recurrent Looped Transformer** (Yifan Zhang, September 12 2026), built in **pure Python** — no PyTorch, no TensorFlow, no JAX, no NumPy, no autograd, no framework of any kind.
+
+The goal is not an implementation. The goal is to open the model up and be able to answer, with actual numbers: what is inside the recurrent state at token `t`, what crosses from `t` to `t+1`, what the gate does numerically, where information from early tokens survives, and where it disappears.
+
+---
+
+## Status
+
+| Phase | Deliverable | State |
+|---|---|---|
+| 0 | `research_notes.md` — paper read as a scientist, facts vs. gaps vs. assumptions | **done** |
+| 1 | `architecture.md` — the model as an explicit computation graph | **done** |
+| 2 | `core_math.py` + `test_core_math.py` — primitives, 67 invariants | **done, 67/67** |
+| 3 | `tiny_rlt.py` — a model small enough to print every number | not started |
+| 4 | `inspect.py` — full forward trace | not started |
+| 5–9 | shape tracking, trajectories, recurrence / cache / attention dissection | not started |
+| 10–12 | manual gradients, BPTT, parameter and gradient dissection | not started |
+| 13–18 | information flow, claim verification, ablation lab, write-up | not started |
+
+Stopping at Phase 2 is deliberate: the brief is to understand every brick before assembling the building.
+
+---
+
+## The one thing to know before reading further
+
+**This paper reports no experiments.** It says so three times (§1, §3.2, §8). There is no task, no dataset, no baseline, no table of results, no hyperparameter appendix. Grep confirms it: zero occurrences of `512`, `1365`, `4+4`, `accuracy`, `we train`, `we evaluate`.
+
+That is not a criticism — it is a design report, and it is explicit about being one. But it changes what "reproduction" means here:
+
+- There is nothing to *re-run*. There are **propositions to verify** (§3.1, App. B.1) and a set of stated structural non-equivalences (§2.4, §2.6, App. B, App. C). These are exactly the kind of claims a pure-Python implementation can check **exactly**, because we control every float.
+- Any experimental configuration or task in this repo is **ours**, chosen by us, and labelled as such. It is never presented as "the paper's setup".
+
+`research_notes.md` §0 records this in full, including the provenance of a config that is easy to mistake for the paper's.
+
+---
+
+## What the paper actually specifies
+
+Three equations carry the whole architecture.
+
+**The merge** — how the previous state re-enters the model (eqs 2.9–2.11):
+
+```
+r_{t-1} = RMSNorm_s(s_{t-1})
+g_t     = sigma( W_g [e_t ; r_{t-1}] + b_g )
+u_t     = e_t + alpha * g_t (*) W_s r_{t-1}
+```
+
+Note `W_s` multiplies `r_{t-1}` — the *normalized* state — not `s_{t-1}`.
+
+**The decoder block** — SWA, then cross-attention to encoder memory, then FFN (eqs 2.12–2.16):
+
+```
+b_t^l = z_t^{l-1} + Attn^D( q_t^l, {(k_j,v_j)}_{j=max(1,t-W+1)}^{t} )     causal SWA
+a_t^l = b_t^l     + Attn^M( q^M_t, M_{<=t}^{g(l)} )                       cross-attn
+z_t^l = a_t^l     + FFN( RMSNorm(a_t^l) )              s_t = z_t^{L_D}
+```
+
+**The recurrence** — and this is the part most implementations get wrong:
+
+```
+H_t = (s_t, C_t^D)
+```
+
+The state that crosses from token to token is **not** just the vector `s_t`. It is `s_t` **and every decoder layer's sliding-window KV cache**. Appendix B makes this explicit with a 2×2 Jacobian:
+
+```
+          [ ds_t/ds_{t-1}    ds_t/dC^D_{t-1}   ]
+    J_t = [                                    ]
+          [ dC^D_t/ds_{t-1}  dC^D_t/dC^D_{t-1} ]
+```
+
+> *"A product involving only `ds_t/ds_{t-1}` generally misses paths through decoder KV."* — App. B
+
+**Consequence, already recorded as a design correction:** setting `alpha = 0` does *not* give you a non-recurrent model. It severs channel 1 and leaves channel 2 running. A genuine non-recurrence control needs `alpha = 0` **and** `W = 1` (at `W = 1` the paper's retained set is explicitly empty). Phase 7's ablation is therefore a 2×2 over `(alpha, W)`, not a single knob.
+
+---
+
+## Phase 2 — what is built
+
+`core_math.py`, ~450 lines, imports `math` and nothing else. Vector and matrix algebra, softmax / log-softmax / sigmoid / GELU, RMSNorm, head splitting, causal and sliding-window masks, attention, an LCG + Box-Muller initializer, and the inspection helpers.
+
+Two deliberate design rules:
+
+1. **`attention()` returns `(out, scores, probs)` — all three.** A function returning only `out` would be exactly the opaque helper this project exists to avoid.
+2. **Initialization has no hidden machinery.** A 10-line linear congruential generator plus Box-Muller, rather than inheriting a Mersenne Twister, so the same seed gives the same weights on any platform and the whole path from bits to weights is readable.
+
+```
+python test_core_math.py     ->   PASSED 67   FAILED 0
+```
+
+### Two results from the invariant suite worth keeping
+
+**RMSNorm's `eps` is not scale-invariant near zero.** Textbook RMSNorm is described as scale-invariant, and at `eps = 0` it is. At `eps = 1e-5` it is not, and the failure is severe exactly in the regime a decaying recurrent state lives in:
+
+```
+   scale c       rms(x)    rms(rmsnorm(c*x))
+     1e+02    9.778e+01             1.000000
+     1e+00    9.778e-01             0.999995
+     1e-01    9.778e-02             0.999477
+     1e-02    9.778e-03             0.951480
+     1e-03    9.778e-04             0.295411
+```
+
+So a state `s_t` that contracts toward zero does **not** get renormalized back to unit RMS — it keeps shrinking through the norm. Directly relevant to §3.3's caveat that *"contraction ... may suppress the practical contribution of long paths."*
+
+**Claim C8 holds exactly.** The paper's read window is `[max(1, t-W+1), t]` and its retention rule is `[max(1, t-W+2), t]`. Those are different intervals, which is easy to misread as an off-by-one. They are consistent:
+
+```
+W=3 t=0: read=[0]        retained=[0]     -> next read=[0,1]
+W=3 t=1: read=[0,1]      retained=[0,1]   -> next read=[0,1,2]
+W=3 t=2: read=[0,1,2]    retained=[1,2]   -> next read=[1,2,3]
+W=3 t=3: read=[1,2,3]    retained=[2,3]   -> next read=[2,3,4]
+```
+
+`retained(t) ∪ {t+1} == read_window(t+1)`, exactly, for every `W ∈ {1,2,3,8}` and every `t`. No slack, no gap. Verified at the mask level now; re-verified against the live cache object in Phase 8.
+
+---
+
+## Files
+
+```
+research_notes.md    the paper, extracted: notation, every equation, every state and
+                     cache, both propositions, the BPTT appendix, and a complete list
+                     of what is UNSPECIFIED with our labelled assumptions
+architecture.md      the computation graph: INPUT -> OPERATION -> OUTPUT -> SHAPE ->
+                     MEANING for every step, with the recurrent path drawn unrolled
+core_math.py         the primitives. imports `math`, nothing else
+test_core_math.py    67 invariants, zero dependencies, runs anywhere
+```
+
+Every claim in the notes is tagged **[PAPER]**, **[UNSPECIFIED BY PAPER]**, or **[IMPLEMENTATION ASSUMPTION]**. Paper facts and our choices are never mixed.
+
+---
+
+## Running it
+
+```bash
+git clone https://github.com/Maverick-Ansh/recurrent_looped_transformer_scratch
+cd recurrent_looped_transformer_scratch
+python test_core_math.py
+```
+
+No install step. No requirements file. Python 3 and the standard library.
