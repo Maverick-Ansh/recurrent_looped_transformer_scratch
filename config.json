@@ -1,0 +1,49 @@
+{
+ "grid": [
+  {
+   "name": "full        a=0.1 W=3",
+   "cfg_over": {
+    "W": 3
+   },
+   "opts": {
+    "alpha": 0.1
+   }
+  },
+  {
+   "name": "state cut   a=0.0 W=3",
+   "cfg_over": {
+    "W": 3
+   },
+   "opts": {
+    "alpha": 0.0
+   }
+  },
+  {
+   "name": "cache cut   a=0.1 W=1",
+   "cfg_over": {
+    "W": 1
+   },
+   "opts": {
+    "alpha": 0.1
+   }
+  },
+  {
+   "name": "BOTH cut    a=0.0 W=1",
+   "cfg_over": {
+    "W": 1
+   },
+   "opts": {
+    "alpha": 0.0
+   }
+  }
+ ],
+ "steps": 100,
+ "batch": 12,
+ "lr": 0.02,
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "task": "running parity, 8 bits, chance 0.5"
+}
