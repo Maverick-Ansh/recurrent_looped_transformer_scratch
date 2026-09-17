@@ -8,20 +8,31 @@ The goal is not an implementation. The goal is to open the model up and be able 
 
 ---
 
-## Status
+## Status — all 18 phases complete
 
-| Phase | Deliverable | State |
+Everything lives in **`RLT_dissection.ipynb`** (Colab). 44 cells, every one executed.
+
+| Phase | What | State |
 |---|---|---|
-| 0 | `research_notes.md` — paper read as a scientist, facts vs. gaps vs. assumptions | **done** |
-| 1 | `architecture.md` — the model as an explicit computation graph | **done** |
-| 2 | `core_math.py` + `test_core_math.py` — primitives, 67 invariants | **done, 67/67** |
-| 3 | `tiny_rlt.py` — a model small enough to print every number | not started |
-| 4 | `inspect.py` — full forward trace | not started |
-| 5–9 | shape tracking, trajectories, recurrence / cache / attention dissection | not started |
-| 10–12 | manual gradients, BPTT, parameter and gradient dissection | not started |
-| 13–18 | information flow, claim verification, ablation lab, write-up | not started |
+| 0–2 | paper extracted, computation graph, primitives | done — 67/67 invariants |
+| 3–5 | tiny RLT (d=8, L=1+1), full forward trace, shape tracker | done |
+| 6, 17 | trajectories across time, ASCII plots + raw data files | done |
+| 7 | recurrence dissection, experiments A–I, 2x2 over (alpha, W) | done |
+| 8–9 | SWA cache as a first-class object, attention as arithmetic | done |
+| 10–12 | hand-written reverse-mode tape, training, parameter + gradient dissection | done — all VJPs finite-difference checked |
+| 13–16 | information flow, all 11 claims, ablation lab (17 trained models) | done |
+| 18 | findings | done |
 
-Stopping at Phase 2 is deliberate: the brief is to understand every brick before assembling the building.
+**Headline results**
+
+- **All 11 extracted claims CONFIRMED**, several at 0 ulp.
+- **There are two recurrent channels, and `alpha = 0` only severs one.** With the state channel cut, the SWA cache still carries a decoder-internal perturbation forward for exactly `W-1` steps, then bit-exact zero. The only true non-recurrence control is `alpha = 0` **and** `W = 1`.
+- **Claim C9 quantified:** the true `ds_t/ds_j` exceeds the product of single-step `ds/ds` factors by up to **8904x** at init (22–35x after training), and by exactly 1.00x at one step — as the structure requires.
+- **Claim C10:** gradient reaches all 9 positions while the `W=3` cache reaches 3.
+- **Truncated BPTT can be gradient-inflating** — "detach s only" has 100.6% of the full gradient norm. The norm is the wrong statistic; the angle is right: `cos(g, g_full) = 0.925`.
+- **The merge is scale-invariant in `s_{t-1}`** (eq 2.9 normalizes first), so `||s_t||` is not an information channel, and `s := 0` is bit-identical to `alpha = 0`.
+- **Ablation:** full 84.09% vs fully-non-recurrent 62.85% on running parity, complete separation across 3 seeds, exact one-sided p = 0.050 — the smallest this design can produce. Monotone ordering in the predicted direction. Underpowered; reported as such.
+- **The depth-split sweep detected nothing and could not have** — confounded by a fixed step budget, n=1. Reported as a null result about the experiment.
 
 ---
 
