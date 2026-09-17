@@ -2,6 +2,8 @@
 
 A computational dissection of **Recurrent Looped Transformer** (Yifan Zhang, September 12 2026), built in **pure Python** — no PyTorch, no TensorFlow, no JAX, no NumPy, no autograd, no framework of any kind.
 
+**The primary artifact is a Colab notebook** — everything (paper notes, computation graph, all primitives, all tests) is written inline there, so there is no module to jump to while reading. This repo is the durable mirror.
+
 The goal is not an implementation. The goal is to open the model up and be able to answer, with actual numbers: what is inside the recurrent state at token `t`, what crosses from `t` to `t+1`, what the gate does numerically, where information from early tokens survives, and where it disappears.
 
 ---
@@ -122,14 +124,18 @@ W=3 t=3: read=[1,2,3]    retained=[2,3]   -> next read=[2,3,4]
 ## Files
 
 ```
-research_notes.md    the paper, extracted: notation, every equation, every state and
-                     cache, both propositions, the BPTT appendix, and a complete list
-                     of what is UNSPECIFIED with our labelled assumptions
-architecture.md      the computation graph: INPUT -> OPERATION -> OUTPUT -> SHAPE ->
-                     MEANING for every step, with the recurrent path drawn unrolled
-core_math.py         the primitives. imports `math`, nothing else
-test_core_math.py    67 invariants, zero dependencies, runs anywhere
+RLT_dissection.ipynb   PRIMARY. The whole dissection, inline: paper notes, computation
+                       graph, every primitive, every test. Read this one.
+research_notes.md      the paper, extracted: notation, every equation, every state and
+                       cache, both propositions, the BPTT appendix, and a complete list
+                       of what is UNSPECIFIED with our labelled assumptions
+architecture.md        the computation graph: INPUT -> OPERATION -> OUTPUT -> SHAPE ->
+                       MEANING for every step, with the recurrent path drawn unrolled
+core_math.py           the primitives as an importable module. imports `math`, nothing else
+test_core_math.py      the same 67 invariants as a standalone script
 ```
+
+The notebook is authoritative; `core_math.py` / `test_core_math.py` are a runnable mirror of its §2 so the suite can be run headless.
 
 Every claim in the notes is tagged **[PAPER]**, **[UNSPECIFIED BY PAPER]**, or **[IMPLEMENTATION ASSUMPTION]**. Paper facts and our choices are never mixed.
 
@@ -137,10 +143,14 @@ Every claim in the notes is tagged **[PAPER]**, **[UNSPECIFIED BY PAPER]**, or *
 
 ## Running it
 
+The notebook needs nothing but Colab (or Jupyter). Headless:
+
 ```bash
 git clone https://github.com/Maverick-Ansh/recurrent_looped_transformer_scratch
 cd recurrent_looped_transformer_scratch
-python test_core_math.py
+python test_core_math.py        # -> PASSED 67   FAILED 0
 ```
 
 No install step. No requirements file. Python 3 and the standard library.
+
+The notebook's last cell syncs itself back here (source-only, outputs stripped). It reads a `GITHUB_TOKEN` from Colab Secrets, which Colab only exposes when the cell is run by hand from the UI.
